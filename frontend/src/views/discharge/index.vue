@@ -37,6 +37,9 @@
       <thead>
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
+          <th>测量方法版本</th>
+          <th>异常兼容</th>
+          <th>整编判定</th>
           <th>当前状态</th>
           <th>可执行动作</th>
         </tr>
@@ -44,10 +47,13 @@
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td>{{ row['测量方法版本'] ?? '—' }}</td>
+          <td>{{ row['异常兼容'] ?? '—' }}</td>
+          <td>{{ compileLabel(row) }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in rowActions(row)"
               :key="action"
               class="link"
               type="button"
@@ -58,7 +64,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无流量监测数据，可先登记流量记录</td>
+          <td :colspan="columns.length + 5" class="empty-state">暂无流量监测数据，可先登记流量记录</td>
         </tr>
       </tbody>
     </table>
@@ -75,29 +81,61 @@ import { computed, onMounted, ref } from 'vue'
 
 import {
   downloadEntries,
+  listDispatchCandidates,
   listEntries,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { classifyFlow, measurementKey } from '@/domain/discharge/flow'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('discharge')
 const columns = ["记录编号", "站点编号", "测量方法", "断面流量", "最大流速", "过水面积", "测量时间", "记录状态"]
-const actions = ["提交审核", "确认通过", "标记异常"]
 const statuses = ["已采集", "待审核", "已通过", "异常值"]
-const stats = [{"label": "今日测量次数", "value": 0}, {"label": "待审核记录", "value": 0}, {"label": "异常记录数", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const stats = computed(() => [
+  { label: '测量记录总数', value: rows.value.length },
+  { label: '待审核记录', value: rows.value.filter((row) => classifyFlow(row).status === '待审核').length },
+  { label: '异常记录数', value: rows.value.filter((row) => classifyFlow(row).abnormal).length },
+])
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 动作只来自统一状态机；分单整编仅对已通过且尚未进入整编任务的测量开放。
+function rowActions(row: EntryRow): string[] {
+  const decision = classifyFlow(row)
+  if (!decision.approved) {
+    return decision.actions
+  }
+  return decision.actions.filter((action) => action !== '分单整编')
+    .concat(isDispatched(row) ? [] : ['分单整编'])
+}
+
+const dispatchedKeys = ref<Set<string>>(new Set())
+
+function isDispatched(row: EntryRow): boolean {
+  return dispatchedKeys.value.has(measurementKey(row))
+}
+
+function compileLabel(row: EntryRow): string {
+  const decision = classifyFlow(row)
+  if (decision.abnormal) {
+    return '异常不可整编'
+  }
+  if (!decision.approved) {
+    return '待确认'
+  }
+  return isDispatched(row) ? '已进入整编' : '可整编'
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +166,13 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    const candidates = listDispatchCandidates()
+    dispatchedKeys.value = new Set(
+      rows.value
+        .filter((row) => classifyFlow(row).approved)
+        .map((row) => measurementKey(row))
+        .filter((key) => !candidates.some((item) => item.key === key)),
+    )
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '流量监测列表读取失败'
   }

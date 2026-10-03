@@ -11,6 +11,27 @@
       </div>
     </header>
 
+    <h3 class="section-title">待分单流量测量（统一判定）</h3>
+    <p class="page-desc">仅列出统一判定为「已通过」且尚未进入任何整编任务的流量测量；同一测量只能分单一次。</p>
+    <table class="data-table">
+      <thead>
+        <tr><th>来源记录编号</th><th>站点编号</th><th>测量唯一键</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="candidate in candidates" :key="candidate.key">
+          <td>{{ candidate.recordNo }}</td>
+          <td>{{ candidate.stationNo }}</td>
+          <td>{{ candidate.key }}</td>
+          <td class="row-actions">
+            <button class="link" type="button" @click="dispatch(candidate.id)">分单整编</button>
+          </td>
+        </tr>
+        <tr v-if="!candidates.length">
+          <td colspan="4" class="empty-state">暂无可分单的流量测量，待记录确认通过后自动进入本清单</td>
+        </tr>
+      </tbody>
+    </table>
+
     <div class="stat-row">
       <article v-for="item in stats" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
@@ -33,10 +54,12 @@
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
     </form>
 
+    <h3 class="section-title">整编成果清单</h3>
     <table class="data-table">
       <thead>
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
+          <th>来源测量键</th>
           <th>当前状态</th>
           <th>可执行动作</th>
         </tr>
@@ -44,6 +67,7 @@
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td>{{ row['来源测量键'] ?? '—' }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
@@ -58,7 +82,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无数据整编数据，可先登记整编成果</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无数据整编数据，可先登记整编成果</td>
         </tr>
       </tbody>
     </table>
@@ -74,12 +98,14 @@
 import { computed, onMounted, ref } from 'vue'
 
 import {
+  dispatchDischargeToCompilation,
   downloadEntries,
+  listDispatchCandidates,
   listEntries,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+import type { EntryRow, FlowCandidate } from '@/data/types'
 
 const meta = moduleMeta('compilation')
 const columns = ["成果编号", "整编年份", "站点编号", "整编类型", "原始记录数", "整编人", "审核人", "整编状态"]
@@ -89,6 +115,7 @@ const stats = [{"label": "待整编年度", "value": 0}, {"label": "整编中年
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
+const candidates = ref<FlowCandidate[]>([])
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
@@ -98,6 +125,16 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function dispatch(id: number) {
+  errorMessage.value = ''
+  const result = dispatchDischargeToCompilation(id)
+  if (!result.ok) {
+    errorMessage.value = result.message
+    return
+  }
+  reload()
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +165,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    candidates.value = listDispatchCandidates()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '数据整编列表读取失败'
   }
