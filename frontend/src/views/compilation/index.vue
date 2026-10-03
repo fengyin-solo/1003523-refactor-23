@@ -2,70 +2,108 @@
   <section class="page" data-module="compilation">
     <header class="page-head">
       <div>
-        <h2>数据整编管理</h2>
-        <p class="page-desc">维护整编成果，围绕成果编号、整编年份、站点编号、整编类型做登记、筛选与状态流转。</p>
+        <h2>数据整编任务清单</h2>
+        <p class="page-desc">
+          整编任务由流量测量分单生成，是否可整编完全复用流量侧的统一判定；
+          同一测量只能进入一个整编任务，已刊印成果保持原结果。
+        </p>
       </div>
       <div class="page-actions">
-        <button class="btn primary" type="button" @click="openCreate">登记整编成果</button>
-        <button class="btn" type="button" @click="exportRows">导出数据整编清单</button>
+        <button class="btn primary" type="button" @click="dispatchAll">扫描并生成整编任务</button>
+        <button class="btn" type="button" @click="exportTasks">导出整编任务清单</button>
       </div>
     </header>
 
     <div class="stat-row">
-      <article v-for="item in stats" :key="item.label" class="stat-card">
+      <article v-for="item in statCards" :key="item.label" class="stat-card">
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
     </div>
 
-    <p class="status-legend">
-      <span v-for="item in statusSummary" :key="item.status" class="legend-item">
-        {{ item.status }}：{{ item.count }}
-      </span>
-    </p>
-
-    <form class="filter-bar" @submit.prevent="reload">
-      <label v-for="field in filterFields" :key="field" class="filter-item">
-        <span>{{ field }}</span>
-        <input v-model="filters[field]" :placeholder="`按${field}检索`" />
-      </label>
-      <button class="btn" type="submit">查询</button>
-      <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
-    </form>
-
+    <h3 class="section-title">整编任务</h3>
     <table class="data-table">
       <thead>
         <tr>
-          <th v-for="column in columns" :key="column">{{ column }}</th>
-          <th>当前状态</th>
+          <th>任务编号</th>
+          <th>整编年份</th>
+          <th>站点编号</th>
+          <th>测量方法 / 版本</th>
+          <th>纳入测量（记录编号）</th>
+          <th>原始记录数</th>
+          <th>创建时间</th>
+          <th>任务状态</th>
           <th>可执行动作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
-          <td>{{ row.status }}</td>
+        <tr v-for="task in tasks" :key="task.id">
+          <td>{{ task.任务编号 }}</td>
+          <td>{{ task.整编年份 }}</td>
+          <td>{{ task.站点编号 }}</td>
+          <td>{{ task.测量方法 }} <small class="version-tag">{{ task.测量方法版本 }}</small></td>
+          <td>{{ task.记录编号.join('、') }}</td>
+          <td>{{ task.原始记录数 }}</td>
+          <td>{{ task.创建时间 }}</td>
+          <td><span :class="['task-badge', `task-${task.状态}`]">{{ task.状态 }}</span></td>
           <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
+            <button v-if="task.状态 === '待整编'" class="link" type="button" @click="taskAction(task.id, '开始整编')">
+              开始整编
             </button>
+            <button v-if="task.状态 === '整编中'" class="link" type="button" @click="taskAction(task.id, '刊印成果')">
+              刊印成果
+            </button>
+            <span v-if="task.状态 === '已刊印'" class="muted-text">已归档</span>
           </td>
         </tr>
-        <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无数据整编数据，可先登记整编成果</td>
+        <tr v-if="!tasks.length">
+          <td colspan="9" class="empty-state">暂无整编任务，可在流量监测页分单，或点击上方扫描生成</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 class="section-title">测量整编资格（与流量页同一份判定）</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>记录编号</th>
+          <th>站点编号</th>
+          <th>测量方法 / 版本</th>
+          <th>测量时间</th>
+          <th>统一判定状态</th>
+          <th>异常兼容</th>
+          <th>整编资格</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in measurements" :key="row.id">
+          <td>{{ row.记录编号 }}</td>
+          <td>{{ row.站点编号 }}</td>
+          <td>{{ row.测量方法 }} <small class="version-tag">{{ row.测量方法版本 }}</small></td>
+          <td>{{ row.测量时间 }}</td>
+          <td>
+            <span :class="['status-badge', `status-${row.verdict.status}`]">{{ row.verdict.statusLabel }}</span>
+          </td>
+          <td>
+            <template v-if="row.verdict.abnormal">
+              <span :class="['compat-tag', row.verdict.abnormalityCompatible ? 'compat-ok' : 'compat-no']">
+                {{ row.verdict.abnormalityCompatible ? `可兼容（${row.异常原因}）` : '不兼容' }}
+              </span>
+            </template>
+            <span v-else class="muted-text">—</span>
+          </td>
+          <td>
+            <span v-if="row.verdict.assigned" class="assigned-tag">已入任务 #{{ row.assignedTaskId }}</span>
+            <span v-else-if="row.verdict.compilationEligible" class="eligible-tag">可整编，待分单</span>
+            <span v-else class="muted-text">不具备资格</span>
+          </td>
         </tr>
       </tbody>
     </table>
 
     <footer class="page-foot">
-      <span>共 {{ total }} 条数据整编记录</span>
-      <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
+      <span>共 {{ tasks.length }} 个整编任务 · 已纳入测量 {{ stats.assigned }} / {{ stats.total }}</span>
+      <span v-if="message" :class="messageOk ? 'ok-text' : 'error-text'">{{ message }}</span>
     </footer>
   </section>
 </template>
@@ -73,64 +111,78 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import { downloadBlob } from '@/api/download'
 import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
-import type { EntryRow } from '@/data/types'
+  dischargeStats,
+  dispatchToCompilation,
+  listDischarge,
+  listTasks,
+  runTaskAction,
+  type CompilationTask,
+  type DischargeRowView,
+} from '@/domain/discharge'
 
-const meta = moduleMeta('compilation')
-const columns = ["成果编号", "整编年份", "站点编号", "整编类型", "原始记录数", "整编人", "审核人", "整编状态"]
-const actions = ["开始整编", "提交审核", "驳回整编"]
-const statuses = ["待整编", "整编中", "待审核", "已刊印", "已驳回"]
-const stats = [{"label": "待整编年度", "value": 0}, {"label": "整编中年度", "value": 0}, {"label": "已刊印成果", "value": 0}]
+const tasks = ref<CompilationTask[]>([])
+const measurements = ref<DischargeRowView[]>([])
+const stats = ref(dischargeStats())
+const message = ref('')
+const messageOk = ref(true)
 
-const rows = ref<EntryRow[]>([])
-const total = ref(0)
-const errorMessage = ref('')
-const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
-const statusSummary = computed(() =>
-  statuses.map((status: string) => ({
-    status,
-    count: rows.value.filter((row) => String(row.status) === status).length,
-  })),
-)
+const statCards = computed(() => [
+  { label: '整编任务总数', value: tasks.value.length },
+  { label: '待整编', value: tasks.value.filter((task) => task.状态 === '待整编').length },
+  { label: '整编中', value: tasks.value.filter((task) => task.状态 === '整编中').length },
+  { label: '已刊印', value: tasks.value.filter((task) => task.状态 === '已刊印').length },
+  { label: '可整编未分单', value: stats.value.eligible },
+])
 
-function resetFilters() {
-  filters.value = {}
-  reload()
-}
-
-function exportRows() {
-  downloadEntries(meta.key)
-}
-
-function openCreate() {
-  errorMessage.value = '整编成果登记入口尚未接入审批流'
-}
-
-function runAction(action: string, row: EntryRow) {
-  errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
-  if (!result.ok) {
-    errorMessage.value = result.message
-    return
-  }
-  reload()
+function notify(text: string, ok = true) {
+  message.value = text
+  messageOk.value = ok
 }
 
 function reload() {
-  errorMessage.value = ''
-  try {
-    const payload = listEntries(meta.key, filters.value)
-    rows.value = payload.items
-    total.value = payload.total
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '数据整编列表读取失败'
+  tasks.value = listTasks()
+  measurements.value = listDischarge()
+  stats.value = dischargeStats()
+}
+
+function dispatchAll() {
+  const summary = dispatchToCompilation()
+  notify(
+    summary.created.length
+      ? summary.message
+      : `没有新的可整编测量（${summary.duplicated.length} 条已分单，${summary.skipped.length} 条不具备资格）`,
+    summary.created.length > 0,
+  )
+  reload()
+}
+
+function taskAction(taskId: number, action: string) {
+  const result = runTaskAction(taskId, action)
+  notify(result.message, result.ok)
+  reload()
+}
+
+function exportTasks() {
+  const header = ['任务编号', '整编年份', '站点编号', '测量方法', '测量方法版本', '记录编号', '原始记录数', '创建时间', '任务状态']
+  const lines = [header.join(',')]
+  for (const task of tasks.value) {
+    lines.push(
+      [
+        task.任务编号,
+        task.整编年份,
+        task.站点编号,
+        task.测量方法,
+        task.测量方法版本,
+        `"${task.记录编号.join('、')}"`,
+        task.原始记录数,
+        task.创建时间,
+        task.状态,
+      ].join(','),
+    )
   }
+  downloadBlob('流量整编任务清单.csv', `﻿${lines.join('\n')}`)
 }
 
 onMounted(reload)

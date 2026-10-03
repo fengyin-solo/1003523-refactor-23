@@ -1,5 +1,6 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { dischargeStore, judgeRecord } from '@/domain/discharge'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -87,6 +88,16 @@ export function downloadEntries(key: string): void {
 export function loadOverview(): OverviewResult {
   const rows = allRows()
   const modules = [...MODULE_BY_KEY.values()].map((meta) => {
+    if (meta.key === 'discharge') {
+      // 流量模块已迁入统一判定领域：概览统计同样只读 judgeRecord，不再看旧标记
+      const verdicts = dischargeStore().records.map(judgeRecord)
+      return {
+        name: meta.name,
+        created: verdicts.length,
+        pending: verdicts.filter((row) => row.pending).length,
+        abnormal: verdicts.filter((row) => row.abnormal).length,
+      }
+    }
     const entries = rows[meta.key] ?? []
     return {
       name: meta.name,
